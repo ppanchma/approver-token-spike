@@ -1,0 +1,75 @@
+name: Approver
+
+# Rotates the user refresh token, then approves or dismisses as that user.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (0 for refresh)
+        required: true
+        default: "0"
+      action:
+        required: true
+        type: choice
+        options: [approve, dismiss, refresh, status]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: approver-token
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: inputs.action != 'status'
+    runs-on: ubuntu-latest
+    environment: approver
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-environments: write
+      - name: ${{ inputs.action }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ENV_NAME: approver
+          CLIENT_ID: ${{ vars.APP_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.APP_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.APP_REFRESH_TOKEN }}
+          ACTION: ${{ inputs.action }}
+          PR: ${{ inputs.pr }}
+        run: python3 .github/scripts/user_token.py act "$ACTION" "$PR"
+
+  report:
+    needs: apply
+    if: always() && inputs.pr != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review state (GITHUB_TOKEN, read only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          sleep 10
+          gh api graphql -F n="$PR" -f o="$OWNER" -f r="$NAME" -f query='
+            query($o:String!, $r:String!, $n:Int!) { repository(owner:$o, name:$r) { pullRequest(number:$n) {
+              number author { login } headRefOid reviewDecision mergeStateStatus
+              latestReviews(first:20) { nodes { author { login } state commit { oid } } } } } }' \
+            --jq '.data.repository.pullRequest' | tee state.json
+          {
+            echo "## PR #$PR"
+            echo '```json'
+            cat state.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

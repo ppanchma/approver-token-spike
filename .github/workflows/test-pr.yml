@@ -1,0 +1,40 @@
+name: Test PR (bot author)
+
+# Opens or updates a docs-only PR as github-actions[bot], so the code owner is not the author.
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: Branch suffix, for example a1
+        required: true
+      mode:
+        type: choice
+        options: [open, push]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.mode == 'push' && format('spike/{0}', inputs.name) || 'main' }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ inputs.name }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$MODE" = open ]; then git checkout -b "spike/$NAME"; fi
+          echo "$NAME $MODE $(date -u +%FT%TZ)" >> "docs/$NAME.md"
+          git add docs
+          git commit -qm "docs: spike $NAME ($MODE)"
+          git push -q origin "spike/$NAME"
+          if [ "$MODE" = open ]; then
+            gh pr create -B main -H "spike/$NAME" -t "spike $NAME: docs-only change" -b "Opened by github-actions[bot] for Stage A."
+          fi

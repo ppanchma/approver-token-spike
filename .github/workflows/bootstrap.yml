@@ -1,0 +1,34 @@
+name: Bootstrap user token
+
+# One-time device-flow authorization. Writes APP_REFRESH_TOKEN to the Environment.
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: approver-token
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    environment: approver
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-environments: write
+      - name: Device flow
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ENV_NAME: approver
+          CLIENT_ID: ${{ vars.APP_CLIENT_ID }}
+        run: python3 .github/scripts/user_token.py bootstrap
